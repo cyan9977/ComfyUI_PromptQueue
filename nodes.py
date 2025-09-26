@@ -98,7 +98,9 @@ def encode_prompts_sequential(clip, ordered_items):
 
     if not cond_list:
         dummy = torch.zeros(1, 1)
-        return dummy, None, False
+        # 创建正确维度的 dummy pooled tensor (SDXL 需要 2816 维)
+        dummy_pooled = torch.zeros(1, 2816)
+        return dummy, dummy_pooled, False
 
     # 对 cond 做 padding
     padded = []
@@ -128,6 +130,11 @@ def encode_prompts_sequential(clip, ordered_items):
                 # 如果维度不一致，放弃 pooled
                 pooled_final = None
                 pooled_available = False
+
+    # 如果 pooled 不可用，创建 dummy pooled tensor
+    if pooled_final is None:
+        # 创建正确维度的 dummy pooled tensor (SDXL 需要 2816 维)
+        pooled_final = torch.zeros(cond_final.shape[0], 2816)  # [N, 2816]
 
     return cond_final, pooled_final, pooled_available
 
@@ -208,7 +215,9 @@ class SimplePromptQueue:
         
         if not 文件路径.strip():
             dummy = torch.zeros(1, 1)
-            return ([[dummy, {"pooled_output": ""}]],)
+            # 创建正确维度的 dummy pooled tensor (SDXL 需要 2816 维)
+            dummy_pooled = torch.zeros(1, 2816)
+            return ([[dummy, {"pooled_output": dummy_pooled}]],)
         
         # 从文件读取提示词
         lines = _read_lines_from_source("", 文件路径, True)
@@ -216,7 +225,9 @@ class SimplePromptQueue:
         
         if not lines:
             dummy = torch.zeros(1, 1)
-            return ([[dummy, {"pooled_output": ""}]],)
+            # 创建正确维度的 dummy pooled tensor (SDXL 需要 2816 维)
+            dummy_pooled = torch.zeros(1, 2816)
+            return ([[dummy, {"pooled_output": dummy_pooled}]],)
 
         # 模式：incremental 每次调用消费一行，使用每个标签的持久计数器
         if 运行模式 == "incremental":
@@ -224,13 +235,13 @@ class SimplePromptQueue:
             line = lines[idx]
             ordered = [(0, line)]
             cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
-            meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+            meta = {"pooled_output": pooled}
             return ([[cond, meta]],)
 
         # 默认：所有行一起批处理
         ordered = list(enumerate(lines))
         cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
-        meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+        meta = {"pooled_output": pooled}
         return ([[cond, meta]],)
 
     @classmethod
@@ -303,14 +314,53 @@ class NegativePromptQueue:
         lines = _apply_template_to_lines(lines, 模板)
 
         if not lines:
-            dummy = torch.zeros(1, 1)
-            return ([[dummy, {"pooled_output": ""}]],)
+            # 使用标准的 CLIP 编码方式处理空输入
+            tokens = clip.tokenize("")
+            cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+            if pooled is None:
+                pooled = torch.zeros(1, 2816)  # SDXL 需要 2816 维
+            return ([[cond, {"pooled_output": pooled}]],)
 
-        # 所有行一起批处理
-        ordered = list(enumerate(lines))
-        cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
-        meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
-        return ([[cond, meta]],)
+        # 使用标准的 CLIP 编码方式处理每一行
+        cond_list = []
+        pooled_list = []
+        
+        with torch.no_grad():
+            for line in lines:
+                tokens = clip.tokenize(line)
+                cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+                
+                # 确保 cond 是 3D 张量 [B, T, C]
+                if cond.dim() == 2:
+                    cond = cond.unsqueeze(0)
+                
+                # 确保 pooled 是 2D 张量 [B, D]
+                if pooled is None:
+                    pooled = torch.zeros(1, 2816)  # SDXL 需要 2816 维
+                elif pooled.dim() == 1:
+                    pooled = pooled.unsqueeze(0)
+                
+                cond_list.append(cond)
+                pooled_list.append(pooled)
+        
+        # 将所有条件连接起来
+        if cond_list:
+            # 对 cond 做 padding 以确保长度一致
+            max_tokens = max(c.shape[1] for c in cond_list)
+            padded_conds = []
+            for c in cond_list:
+                if c.shape[1] < max_tokens:
+                    pad_len = max_tokens - c.shape[1]
+                    c = F.pad(c, (0, 0, 0, pad_len))
+                padded_conds.append(c)
+            cond_final = torch.cat(padded_conds, dim=0)
+            pooled_final = torch.cat(pooled_list, dim=0)
+        else:
+            # 空情况
+            cond_final = torch.zeros(1, 1)
+            pooled_final = torch.zeros(1, 2816)
+        
+        return ([[cond_final, {"pooled_output": pooled_final}]],)
 
     @classmethod
     def IS_CHANGED(cls, clip, 多行文本, 预设模板="None", 模板="{p}", 保存预设=False, 删除预设=False):
@@ -385,7 +435,9 @@ class PromptQueue:
 
         if not lines:
             dummy = torch.zeros(1, 1)
-            return ([[dummy, {"pooled_output": ""}]],)
+            # 创建正确维度的 dummy pooled tensor (SDXL 需要 2816 维)
+            dummy_pooled = torch.zeros(1, 2816)
+            return ([[dummy, {"pooled_output": dummy_pooled}]],)
 
         # 模式：incremental 每次调用消费一行，使用每个标签的持久计数器
         if 运行模式 == "incremental":
@@ -393,13 +445,13 @@ class PromptQueue:
             line = lines[idx]
             ordered = [(0, line)]
             cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
-            meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+            meta = {"pooled_output": pooled}
             return ([[cond, meta]],)
 
         # 默认：所有行一起批处理
         ordered = list(enumerate(lines))
         cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
-        meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+        meta = {"pooled_output": pooled}
         return ([[cond, meta]],)
 
     @classmethod
