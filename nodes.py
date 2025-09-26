@@ -163,15 +163,22 @@ class PromptQueue:
     """
     @classmethod
     def INPUT_TYPES(cls):
+        # 动态获取预设列表
+        presets = _pq_load_template_presets()
+        preset_list = ["None"] + list(presets.keys())
+        
         return {
             "required": {
                 "clip": ("CLIP",),
                 "multiline_text": ("STRING", {"multiline": True, "default": "A cat\nA dog\nA bird"}),
                 "use_file": ("BOOLEAN", {"default": False}),
                 "file_path": ("STRING", {"multiline": False, "default": ""}),
-                "template": ("STRING", {"multiline": False, "default": "{p}"}),
                 "mode": (["all", "incremental"],),
                 "label": ("STRING", {"multiline": False, "default": "Prompt Queue 001"}),
+                "preset": (preset_list, {"default": "None"}),
+                "template": ("STRING", {"multiline": False, "default": "{p}"}),
+                "save_preset": ("BOOLEAN", {"default": False}),
+                "delete_preset": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -180,7 +187,28 @@ class PromptQueue:
     FUNCTION = "run"
     CATEGORY = "SimpleBatch"
 
-    def run(self, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001"):
+    def run(self, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001", preset="None", save_preset=False, delete_preset=False):
+        # 处理删除预设 - 拥有最高优先级
+        if delete_preset and preset != "None":
+            _pq_delete_template_preset(preset)
+            print(f"[Prompt Queue] 已删除预设 '{preset}'")
+            print(f"[Prompt Queue] 使用 template 内容（删除预设后）: {template}")
+        # 处理保存预设 - 第二优先级，强制使用 template 内容
+        elif save_preset and template.strip():
+            _pq_save_template_preset(template.strip(), template.strip())
+            print(f"[Prompt Queue] 已保存预设 '{template.strip()}': {template.strip()}")
+            print(f"[Prompt Queue] 使用 template 内容（save_preset 优先级）: {template}")
+        # 处理预设选择 - 当选择非"None"预设且未开启保存/删除时，使用预设内容
+        elif preset != "None":
+            presets = _pq_load_template_presets()
+            if preset in presets:
+                template = presets[preset]
+                print(f"[Prompt Queue] 使用预设 '{preset}': {template}")
+            else:
+                print(f"[Prompt Queue] 预设 '{preset}' 不存在，使用 template 内容")
+        else:
+            print(f"[Prompt Queue] 使用 template 内容: {template}")
+        
         lines = _read_lines_from_source(multiline_text, file_path, use_file)
         lines = _apply_template_to_lines(lines, template)
 
@@ -204,14 +232,17 @@ class PromptQueue:
         return ([[cond, meta]],)
 
     @classmethod
-    def IS_CHANGED(cls, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001"):
+    def IS_CHANGED(cls, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001", preset="None", save_preset=False, delete_preset=False):
         # Ensure incremental mode re-executes each time to advance the queue
         if mode == "incremental":
+            return str(time.time())
+        # Force re-execution when preset changes to update template in real-time
+        if preset != "None":
             return str(time.time())
         # For deterministic modes, hash inputs so caching works as expected
         try:
             desc = _pq_source_descriptor(bool(use_file), str(file_path), str(multiline_text))
-            key = f"{desc}|{template}"
+            key = f"{desc}|{template}|{preset}"
             return hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()
         except Exception:
             return ""
@@ -280,6 +311,23 @@ def _pq_get_next_index(label: str, _pq_total: int, source_descriptor: str) -> in
     next_index = current % _pq_total
     _pq_store.put("PromptQueue Counters", label, (current + 1) % _pq_total)
     return next_index
+
+
+def _pq_save_template_preset(name: str, template: str) -> None:
+    """保存模板预设"""
+    _pq_store.put("Template Presets", name, template)
+
+
+def _pq_load_template_presets() -> dict:
+    """加载所有模板预设"""
+    return _pq_store.data.get("Template Presets", {})
+
+
+def _pq_delete_template_preset(name: str) -> None:
+    """删除模板预设"""
+    if "Template Presets" in _pq_store.data and name in _pq_store.data["Template Presets"]:
+        del _pq_store.data["Template Presets"][name]
+        _pq_store._save()
 
 
 # 注册新节点
