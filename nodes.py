@@ -16,6 +16,19 @@ import torch.nn.functional as F
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
+# 参数标签翻译映射
+PARAMETER_LABELS = {
+    "multiline_text": "多行文本",
+    "use_file": "使用文件", 
+    "file_path": "文件路径",
+    "mode": "运行模式",
+    "label": "队列标识",
+    "preset": "预设模板",
+    "template": "模板",
+    "save_preset": "保存预设",
+    "delete_preset": "删除预设"
+}
+
 def parse_frame_prompts(raw_text: str):
     """
     解析输入为 {frame_index: prompt} 的升序字典。
@@ -67,7 +80,7 @@ def encode_prompts_sequential(clip, ordered_items):
                 if cond.dim() == 2:
                     cond = cond.unsqueeze(0)
                 else:
-                    raise ValueError(f"Unexpected cond tensor shape: {cond.shape}")
+                    raise ValueError(f"意外的 cond 张量形状: {cond.shape}")
 
             if cond.shape[1] > max_tokens:
                 max_tokens = cond.shape[1]
@@ -155,6 +168,164 @@ def _apply_template_to_lines(lines, template: str):
     return [template.replace("{p}", line) for line in lines]
 
 
+class SimplePromptQueue:
+    """
+    简化版提示词队列节点，支持从文件读取和预设模板功能。
+    将多行提示词视为队列，从 txt 文件读取（逐行）。
+    输出按批次堆叠的 CONDITIONING，便于一次性批量生成。
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 动态获取预设列表（正面）
+        presets = _pq_load_positive_template_presets()
+        preset_list = ["None"] + list(presets.keys())
+
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "运行模式": (["all", "incremental"], {"default": "all"}),
+                "队列标识": ("STRING", {"multiline": False, "default": "Simple Queue 001"}),
+                "预设模板": (preset_list, {"default": "None"}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("positive",)
+    FUNCTION = "run"
+    CATEGORY = "PromptQueue"
+
+    def run(self, clip, 文件路径, 运行模式="all", 队列标识="Simple Queue 001", 预设模板="None"):
+        # 选择预设（若为 None 则不应用模板）
+        模板 = ""
+        if 预设模板 != "None":
+            presets = _pq_load_positive_template_presets()
+            if 预设模板 in presets:
+                模板 = presets[预设模板]
+                print(f"[Simple Prompt Queue] 使用预设 '{预设模板}': {模板}")
+            else:
+                print(f"[Simple Prompt Queue] 预设 '{预设模板}' 不存在，忽略模板")
+        
+        if not 文件路径.strip():
+            dummy = torch.zeros(1, 1)
+            return ([[dummy, {"pooled_output": ""}]],)
+        
+        # 从文件读取提示词
+        lines = _read_lines_from_source("", 文件路径, True)
+        lines = _apply_template_to_lines(lines, 模板)
+        
+        if not lines:
+            dummy = torch.zeros(1, 1)
+            return ([[dummy, {"pooled_output": ""}]],)
+
+        # 模式：incremental 每次调用消费一行，使用每个标签的持久计数器
+        if 运行模式 == "incremental":
+            idx = _pq_get_next_index(队列标识, _pq_total=len(lines), source_descriptor=_pq_source_descriptor(True, 文件路径, ""))
+            line = lines[idx]
+            ordered = [(0, line)]
+            cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
+            meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+            return ([[cond, meta]],)
+
+        # 默认：所有行一起批处理
+        ordered = list(enumerate(lines))
+        cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
+        meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+        return ([[cond, meta]],)
+
+    @classmethod
+    def IS_CHANGED(cls, clip, 文件路径, 运行模式="all", 队列标识="Simple Queue 001", 预设模板="None"):
+        # 确保增量模式每次重新执行以推进队列
+        if 运行模式 == "incremental":
+            return str(time.time())
+        # 当预设更改时强制重新执行以实时更新模板
+        if 预设模板 != "None":
+            return str(time.time())
+        # 对于确定性模式，对输入进行哈希以便缓存按预期工作
+        try:
+            desc = _pq_source_descriptor(True, str(文件路径), "")
+            key = f"{desc}|{运行模式}|{队列标识}|{预设模板}"
+            return hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()
+        except Exception:
+            return ""
+
+
+class NegativePromptQueue:
+    """
+    负面提示词队列节点，专门用于处理负面提示词。
+    支持多行文本输入和预设模板功能，模板配置方式与PromptQueue一致。
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 动态获取预设列表（负面）
+        presets = _pq_load_negative_template_presets()
+        preset_list = ["None"] + list(presets.keys())
+
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "多行文本": ("STRING", {"multiline": True, "default": "blurry, low quality, distorted"}),
+                "预设模板": (preset_list, {"default": "None"}),
+                "模板": ("STRING", {"multiline": False, "default": "{p}"}),
+                "保存预设": ("BOOLEAN", {"default": False}),
+                "删除预设": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("negative",)
+    FUNCTION = "run"
+    CATEGORY = "PromptQueue"
+
+    def run(self, clip, 多行文本, 预设模板="None", 模板="{p}", 保存预设=False, 删除预设=False):
+        # 处理删除预设 - 拥有最高优先级
+        if 删除预设 and 预设模板 != "None":
+            _pq_delete_negative_template_preset(预设模板)
+            print(f"[Negative Prompt Queue] 已删除预设 '{预设模板}'")
+            print(f"[Negative Prompt Queue] 使用 template 内容（删除预设后）: {模板}")
+        # 处理保存预设 - 第二优先级，强制使用 template 内容
+        elif 保存预设 and 模板.strip():
+            _pq_save_negative_template_preset(模板.strip(), 模板.strip())
+            print(f"[Negative Prompt Queue] 已保存预设 '{模板.strip()}': {模板.strip()}")
+            print(f"[Negative Prompt Queue] 使用 template 内容（save_preset 优先级）: {模板}")
+        # 处理预设选择 - 当选择非"None"预设且未开启保存/删除时，使用预设内容
+        elif 预设模板 != "None":
+            presets = _pq_load_negative_template_presets()
+            if 预设模板 in presets:
+                模板 = presets[预设模板]
+                print(f"[Negative Prompt Queue] 使用预设 '{预设模板}': {模板}")
+            else:
+                print(f"[Negative Prompt Queue] 预设 '{预设模板}' 不存在，使用 template 内容")
+        else:
+            print(f"[Negative Prompt Queue] 使用 template 内容: {模板}")
+        
+        lines = _read_lines_from_source(多行文本, "", False)
+        lines = _apply_template_to_lines(lines, 模板)
+
+        if not lines:
+            dummy = torch.zeros(1, 1)
+            return ([[dummy, {"pooled_output": ""}]],)
+
+        # 所有行一起批处理
+        ordered = list(enumerate(lines))
+        cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
+        meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
+        return ([[cond, meta]],)
+
+    @classmethod
+    def IS_CHANGED(cls, clip, 多行文本, 预设模板="None", 模板="{p}", 保存预设=False, 删除预设=False):
+        # 当预设更改时强制重新执行以实时更新模板
+        if 预设模板 != "None":
+            return str(time.time())
+        # 对于确定性模式，对输入进行哈希以便缓存按预期工作
+        try:
+            desc = _pq_source_descriptor(False, "", str(多行文本))
+            key = f"{desc}|{模板}|{预设模板}"
+            return hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()
+        except Exception:
+            return ""
+
+
 class PromptQueue:
     """
     将多行提示词视为队列，或从 txt 文件读取（逐行）。
@@ -163,92 +334,92 @@ class PromptQueue:
     """
     @classmethod
     def INPUT_TYPES(cls):
-        # 动态获取预设列表
-        presets = _pq_load_template_presets()
+        # 动态获取预设列表（正面）
+        presets = _pq_load_positive_template_presets()
         preset_list = ["None"] + list(presets.keys())
         
         return {
             "required": {
                 "clip": ("CLIP",),
-                "multiline_text": ("STRING", {"multiline": True, "default": "A cat\nA dog\nA bird"}),
-                "use_file": ("BOOLEAN", {"default": False}),
-                "file_path": ("STRING", {"multiline": False, "default": ""}),
-                "mode": (["all", "incremental"],),
-                "label": ("STRING", {"multiline": False, "default": "Prompt Queue 001"}),
-                "preset": (preset_list, {"default": "None"}),
-                "template": ("STRING", {"multiline": False, "default": "{p}"}),
-                "save_preset": ("BOOLEAN", {"default": False}),
-                "delete_preset": ("BOOLEAN", {"default": False}),
+                "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog\nA bird"}),
+                "使用文件": ("BOOLEAN", {"default": False}),
+                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "运行模式": (["all", "incremental"], {"default": "all"}),
+                "队列标识": ("STRING", {"multiline": False, "default": "Prompt Queue 001"}),
+                "预设模板": (preset_list, {"default": "None"}),
+                "模板": ("STRING", {"multiline": False, "default": "{p}"}),
+                "保存预设": ("BOOLEAN", {"default": False}),
+                "删除预设": ("BOOLEAN", {"default": False}),
             }
         }
 
     RETURN_TYPES = ("CONDITIONING",)
-    RETURN_NAMES = ("COND",)
+    RETURN_NAMES = ("positive",)
     FUNCTION = "run"
-    CATEGORY = "SimpleBatch"
+    CATEGORY = "PromptQueue"
 
-    def run(self, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001", preset="None", save_preset=False, delete_preset=False):
+    def run(self, clip, 多行文本, 使用文件, 文件路径, 模板, 运行模式="all", 队列标识="Prompt Queue 001", 预设模板="None", 保存预设=False, 删除预设=False):
         # 处理删除预设 - 拥有最高优先级
-        if delete_preset and preset != "None":
-            _pq_delete_template_preset(preset)
-            print(f"[Prompt Queue] 已删除预设 '{preset}'")
-            print(f"[Prompt Queue] 使用 template 内容（删除预设后）: {template}")
+        if 删除预设 and 预设模板 != "None":
+            _pq_delete_positive_template_preset(预设模板)
+            print(f"[Prompt Queue] 已删除预设 '{预设模板}'")
+            print(f"[Prompt Queue] 使用 template 内容（删除预设后）: {模板}")
         # 处理保存预设 - 第二优先级，强制使用 template 内容
-        elif save_preset and template.strip():
-            _pq_save_template_preset(template.strip(), template.strip())
-            print(f"[Prompt Queue] 已保存预设 '{template.strip()}': {template.strip()}")
-            print(f"[Prompt Queue] 使用 template 内容（save_preset 优先级）: {template}")
+        elif 保存预设 and 模板.strip():
+            _pq_save_positive_template_preset(模板.strip(), 模板.strip())
+            print(f"[Prompt Queue] 已保存预设 '{模板.strip()}': {模板.strip()}")
+            print(f"[Prompt Queue] 使用 template 内容（save_preset 优先级）: {模板}")
         # 处理预设选择 - 当选择非"None"预设且未开启保存/删除时，使用预设内容
-        elif preset != "None":
-            presets = _pq_load_template_presets()
-            if preset in presets:
-                template = presets[preset]
-                print(f"[Prompt Queue] 使用预设 '{preset}': {template}")
+        elif 预设模板 != "None":
+            presets = _pq_load_positive_template_presets()
+            if 预设模板 in presets:
+                模板 = presets[预设模板]
+                print(f"[Prompt Queue] 使用预设 '{预设模板}': {模板}")
             else:
-                print(f"[Prompt Queue] 预设 '{preset}' 不存在，使用 template 内容")
+                print(f"[Prompt Queue] 预设 '{预设模板}' 不存在，使用 template 内容")
         else:
-            print(f"[Prompt Queue] 使用 template 内容: {template}")
+            print(f"[Prompt Queue] 使用 template 内容: {模板}")
         
-        lines = _read_lines_from_source(multiline_text, file_path, use_file)
-        lines = _apply_template_to_lines(lines, template)
+        lines = _read_lines_from_source(多行文本, 文件路径, 使用文件)
+        lines = _apply_template_to_lines(lines, 模板)
 
         if not lines:
             dummy = torch.zeros(1, 1)
             return ([[dummy, {"pooled_output": ""}]],)
 
-        # Mode: incremental consumes one line per call using a persistent counter per label
-        if mode == "incremental":
-            idx = _pq_get_next_index(label, _pq_total=len(lines), source_descriptor=_pq_source_descriptor(use_file, file_path, multiline_text))
+        # 模式：incremental 每次调用消费一行，使用每个标签的持久计数器
+        if 运行模式 == "incremental":
+            idx = _pq_get_next_index(队列标识, _pq_total=len(lines), source_descriptor=_pq_source_descriptor(使用文件, 文件路径, 多行文本))
             line = lines[idx]
             ordered = [(0, line)]
             cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
             meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
             return ([[cond, meta]],)
 
-        # Default: all lines batched together
+        # 默认：所有行一起批处理
         ordered = list(enumerate(lines))
         cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
         meta = {"pooled_output": pooled if has_pooled and pooled is not None else ""}
         return ([[cond, meta]],)
 
     @classmethod
-    def IS_CHANGED(cls, clip, multiline_text, use_file, file_path, template, mode="all", label="Prompt Queue 001", preset="None", save_preset=False, delete_preset=False):
-        # Ensure incremental mode re-executes each time to advance the queue
-        if mode == "incremental":
+    def IS_CHANGED(cls, clip, 多行文本, 使用文件, 文件路径, 模板, 运行模式="all", 队列标识="Prompt Queue 001", 预设模板="None", 保存预设=False, 删除预设=False):
+        # 确保增量模式每次重新执行以推进队列
+        if 运行模式 == "incremental":
             return str(time.time())
-        # Force re-execution when preset changes to update template in real-time
-        if preset != "None":
+        # 当预设更改时强制重新执行以实时更新模板
+        if 预设模板 != "None":
             return str(time.time())
-        # For deterministic modes, hash inputs so caching works as expected
+        # 对于确定性模式，对输入进行哈希以便缓存按预期工作
         try:
-            desc = _pq_source_descriptor(bool(use_file), str(file_path), str(multiline_text))
-            key = f"{desc}|{template}|{preset}"
+            desc = _pq_source_descriptor(bool(使用文件), str(文件路径), str(多行文本))
+            key = f"{desc}|{模板}|{预设模板}"
             return hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()
         except Exception:
             return ""
 
 
-# --- Persistent queue state (per label) ---
+# --- 持久队列状态（每个标签）---
 class _JsonKVStore:
     def __init__(self, file_path: str):
         self.file_path = file_path
@@ -293,7 +464,7 @@ def _pq_source_descriptor(use_file: bool, file_path: str, multiline_text: str) -
             return "FILE:" + os.path.abspath(file_path)
         except Exception:
             return "FILE:" + file_path
-    # Text hash as descriptor; content changes won't reset index to allow continuing when appending
+    # 文本哈希作为描述符；内容更改不会重置索引以允许在追加时继续
     h = hashlib.sha1(multiline_text.encode("utf-8", errors="ignore")).hexdigest()
     return "TEXT:" + h
 
@@ -301,7 +472,7 @@ def _pq_source_descriptor(use_file: bool, file_path: str, multiline_text: str) -
 def _pq_get_next_index(label: str, _pq_total: int, source_descriptor: str) -> int:
     if _pq_total <= 0:
         return 0
-    # Reset only when source type switches between FILE and TEXT, or file path changes
+    # 仅在源类型在 FILE 和 TEXT 之间切换或文件路径更改时重置
     stored_src = _pq_store.get("PromptQueue Sources", label, None)
     if stored_src != source_descriptor:
         _pq_store.put("PromptQueue Sources", label, source_descriptor)
@@ -313,28 +484,49 @@ def _pq_get_next_index(label: str, _pq_total: int, source_descriptor: str) -> in
     return next_index
 
 
-def _pq_save_template_preset(name: str, template: str) -> None:
-    """保存模板预设"""
-    _pq_store.put("Template Presets", name, template)
+def _pq_save_positive_template_preset(name: str, template: str) -> None:
+    """保存正面模板预设"""
+    _pq_store.put("Template Presets Positive", name, template)
 
 
-def _pq_load_template_presets() -> dict:
-    """加载所有模板预设"""
-    return _pq_store.data.get("Template Presets", {})
+def _pq_load_positive_template_presets() -> dict:
+    """加载所有正面模板预设"""
+    return _pq_store.data.get("Template Presets Positive", {})
 
 
-def _pq_delete_template_preset(name: str) -> None:
-    """删除模板预设"""
-    if "Template Presets" in _pq_store.data and name in _pq_store.data["Template Presets"]:
-        del _pq_store.data["Template Presets"][name]
+def _pq_delete_positive_template_preset(name: str) -> None:
+    """删除正面模板预设"""
+    if "Template Presets Positive" in _pq_store.data and name in _pq_store.data["Template Presets Positive"]:
+        del _pq_store.data["Template Presets Positive"][name]
+        _pq_store._save()
+
+
+def _pq_save_negative_template_preset(name: str, template: str) -> None:
+    """保存负面模板预设"""
+    _pq_store.put("Template Presets Negative", name, template)
+
+
+def _pq_load_negative_template_presets() -> dict:
+    """加载所有负面模板预设"""
+    return _pq_store.data.get("Template Presets Negative", {})
+
+
+def _pq_delete_negative_template_preset(name: str) -> None:
+    """删除负面模板预设"""
+    if "Template Presets Negative" in _pq_store.data and name in _pq_store.data["Template Presets Negative"]:
+        del _pq_store.data["Template Presets Negative"][name]
         _pq_store._save()
 
 
 # 注册新节点
 NODE_CLASS_MAPPINGS.update({
     "PromptQueue": PromptQueue,
+    "SimplePromptQueue": SimplePromptQueue,
+    "NegativePromptQueue": NegativePromptQueue,
 })
 
 NODE_DISPLAY_NAME_MAPPINGS.update({
-    "PromptQueue": "Prompt Queue",
+    "PromptQueue": "Prompt Queue / 提示词队列",
+    "SimplePromptQueue": "Simple Prompt Queue / 简化提示词队列",
+    "NegativePromptQueue": "Negative Prompt Queue / 负面提示词队列",
 })
