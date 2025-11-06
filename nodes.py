@@ -26,7 +26,10 @@ PARAMETER_LABELS = {
     "preset": "预设模板",
     "template": "模板",
     "save_preset": "保存预设",
-    "delete_preset": "删除预设"
+    "delete_preset": "删除预设",
+    "artist_style_prompt": "画师/风格提示词",
+    "prompt_suffix": "提示词后缀",
+    "preset_name_for_save": "保存预设名称"
 }
 
 def parse_frame_prompts(raw_text: str):
@@ -471,6 +474,122 @@ class PromptQueue:
             return ""
 
 
+class StylePromptQueue:
+    """
+    一个风格化的提示词队列节点，为画师/风格前缀和后缀提供独立的字段，
+    并为它们提供预设系统。仅在增量模式下运行。
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 动态获取预设列表（正面）
+        presets = _pq_load_positive_template_presets()
+        preset_list = ["None"] + list(presets.keys())
+        
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "artist_style_prompt": ("STRING", {"multiline": False, "default": ""}),
+                "multiline_text": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
+                "use_file": ("BOOLEAN", {"default": False}),
+                "file_path": ("STRING", {"multiline": False, "default": ""}),
+                "prompt_suffix": ("STRING", {"multiline": False, "default": ""}),
+                "label": ("STRING", {"multiline": False, "default": "Style Queue 001"}),
+                "preset": (preset_list, {"default": "None"}),
+                "preset_name_for_save": ("STRING", {"multiline": False, "default": ""}),
+                "save_preset": ("BOOLEAN", {"default": False}),
+                "delete_preset": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    RETURN_TYPES = ("CONDITIONING",)
+    RETURN_NAMES = ("positive",)
+    FUNCTION = "run"
+    CATEGORY = "PromptQueue"
+
+    def run(self, clip, artist_style_prompt, multiline_text, use_file, file_path, prompt_suffix, label, preset, preset_name_for_save, save_preset, delete_preset):
+        prefix = artist_style_prompt
+        suffix = prompt_suffix
+
+        # 处理预设
+        if delete_preset and preset != "None":
+            _pq_delete_positive_template_preset(preset)
+            print(f"[Style Prompt Queue] 已删除预设 '{preset}'")
+        
+        elif save_preset and preset_name_for_save.strip():
+            preset_name = preset_name_for_save.strip()
+            
+            parts = []
+            p = prefix.strip()
+            s = suffix.strip()
+            if p:
+                parts.append(p)
+            parts.append("{p}")
+            if s:
+                parts.append(s)
+            
+            preset_data = ",".join(parts)
+            _pq_save_positive_template_preset(preset_name, preset_data)
+            print(f"[Style Prompt Queue] 已保存预设 '{preset_name}': {preset_data}")
+
+        elif preset != "None":
+            presets = _pq_load_positive_template_presets()
+            if preset in presets:
+                preset_content = presets[preset]
+                
+                is_legacy_json = False
+                try:
+                    data = json.loads(preset_content)
+                    if isinstance(data, dict) and ("prefix" in data or "suffix" in data):
+                        prefix = data.get("prefix", "")
+                        suffix = data.get("suffix", "")
+                        print(f"[Style Prompt Queue] 已从旧版JSON格式加载预设 '{preset}'")
+                        is_legacy_json = True
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                if not is_legacy_json:
+                    if "{p}" in preset_content:
+                        parts = preset_content.split("{p}", 1)
+                        prefix = parts[0].rstrip(',').strip()
+                        if len(parts) > 1:
+                            suffix = parts[1].lstrip(',').strip()
+                        else:
+                            suffix = ""
+                        print(f"[Style Prompt Queue] 已加载预设 '{preset}'")
+                    else:
+                        prefix = preset_content
+                        suffix = ""
+                        print(f"[Style Prompt Queue] 无法解析预设 '{preset}'，已作为前缀处理")
+
+        lines = _read_lines_from_source(multiline_text, file_path, use_file)
+        
+        # 应用前缀和后缀
+        final_lines = []
+        for line in lines:
+            parts = [p for p in [prefix, line, suffix] if p and p.strip()]
+            final_lines.append(", ".join(parts))
+
+        if not final_lines:
+            # 返回空的 conditioning
+            dummy = torch.zeros(1, 1)
+            dummy_pooled = torch.zeros(1, 2816)
+            return ([[dummy, {"pooled_output": dummy_pooled}]],)
+
+        # 始终为增量模式
+        idx = _pq_get_next_index(label, _pq_total=len(final_lines), source_descriptor=_pq_source_descriptor(use_file, file_path, multiline_text))
+        line_to_process = final_lines[idx]
+        
+        ordered = [(0, line_to_process)]
+        cond, pooled, has_pooled = encode_prompts_sequential(clip, ordered)
+        meta = {"pooled_output": pooled}
+        return ([[cond, meta]],)
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        # 始终返回时间戳以强制重新执行
+        return str(time.time())
+
+
 # --- 持久队列状态（每个标签）---
 class _JsonKVStore:
     def __init__(self, file_path: str):
@@ -575,10 +694,12 @@ NODE_CLASS_MAPPINGS.update({
     "PromptQueue": PromptQueue,
     "SimplePromptQueue": SimplePromptQueue,
     "NegativePromptQueue": NegativePromptQueue,
+    "StylePromptQueue": StylePromptQueue,
 })
 
 NODE_DISPLAY_NAME_MAPPINGS.update({
     "PromptQueue": "Prompt Queue / 提示词队列",
     "SimplePromptQueue": "Simple Prompt Queue / 简化提示词队列",
     "NegativePromptQueue": "Negative Prompt Queue / 负面提示词队列",
+    "StylePromptQueue": "Style Prompt Queue / 风格化提示词队列",
 })
