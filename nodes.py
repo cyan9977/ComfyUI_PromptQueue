@@ -27,7 +27,7 @@ PARAMETER_LABELS = {
     "template": "模板",
     "save_preset": "保存预设",
     "delete_preset": "删除预设",
-    "artist_style_prompt": "画师/风格提示词",
+    "artist_style_prompt": "画师风格提示词",
     "prompt_suffix": "提示词后缀",
     "preset_name_for_save": "保存预设名称"
 }
@@ -488,16 +488,16 @@ class StylePromptQueue:
         return {
             "required": {
                 "clip": ("CLIP",),
-                "artist_style_prompt": ("STRING", {"multiline": False, "default": ""}),
-                "multiline_text": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
-                "use_file": ("BOOLEAN", {"default": False}),
-                "file_path": ("STRING", {"multiline": False, "default": ""}),
-                "prompt_suffix": ("STRING", {"multiline": False, "default": ""}),
-                "label": ("STRING", {"multiline": False, "default": "Style Queue 001"}),
-                "preset": (preset_list, {"default": "None"}),
-                "preset_name_for_save": ("STRING", {"multiline": False, "default": ""}),
-                "save_preset": ("BOOLEAN", {"default": False}),
-                "delete_preset": ("BOOLEAN", {"default": False}),
+                "画师风格提示词": ("STRING", {"multiline": False, "default": ""}),
+                "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
+                "使用文件": ("BOOLEAN", {"default": False}),
+                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "提示词后缀": ("STRING", {"multiline": False, "default": ""}),
+                "队列标识": ("STRING", {"multiline": False, "default": "Style Queue 001"}),
+                "预设模板": (preset_list, {"default": "None"}),
+                "保存预设名称": ("STRING", {"multiline": False, "default": ""}),
+                "保存预设": ("BOOLEAN", {"default": False}),
+                "删除预设": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -506,17 +506,17 @@ class StylePromptQueue:
     FUNCTION = "run"
     CATEGORY = "PromptQueue"
 
-    def run(self, clip, artist_style_prompt, multiline_text, use_file, file_path, prompt_suffix, label, preset, preset_name_for_save, save_preset, delete_preset):
-        prefix = artist_style_prompt
-        suffix = prompt_suffix
+    def run(self, clip, 画师风格提示词, 多行文本, 使用文件, 文件路径, 提示词后缀, 队列标识, 预设模板, 保存预设名称, 保存预设, 删除预设):
+        prefix = 画师风格提示词
+        suffix = 提示词后缀
 
         # 处理预设
-        if delete_preset and preset != "None":
-            _pq_delete_positive_template_preset(preset)
-            print(f"[Style Prompt Queue] 已删除预设 '{preset}'")
+        if 删除预设 and 预设模板 != "None":
+            _pq_delete_positive_template_preset(预设模板)
+            print(f"[Style Prompt Queue] 已删除预设 '{预设模板}'")
         
-        elif save_preset and preset_name_for_save.strip():
-            preset_name = preset_name_for_save.strip()
+        elif 保存预设 and 保存预设名称.strip():
+            preset_name = 保存预设名称.strip()
             
             parts = []
             p = prefix.strip()
@@ -531,10 +531,10 @@ class StylePromptQueue:
             _pq_save_positive_template_preset(preset_name, preset_data)
             print(f"[Style Prompt Queue] 已保存预设 '{preset_name}': {preset_data}")
 
-        elif preset != "None":
+        elif 预设模板 != "None":
             presets = _pq_load_positive_template_presets()
-            if preset in presets:
-                preset_content = presets[preset]
+            if 预设模板 in presets:
+                preset_content = presets[预设模板]
                 
                 is_legacy_json = False
                 try:
@@ -542,7 +542,7 @@ class StylePromptQueue:
                     if isinstance(data, dict) and ("prefix" in data or "suffix" in data):
                         prefix = data.get("prefix", "")
                         suffix = data.get("suffix", "")
-                        print(f"[Style Prompt Queue] 已从旧版JSON格式加载预设 '{preset}'")
+                        print(f"[Style Prompt Queue] 已从旧版JSON格式加载预设 '{预设模板}'")
                         is_legacy_json = True
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -555,13 +555,13 @@ class StylePromptQueue:
                             suffix = parts[1].lstrip(',').strip()
                         else:
                             suffix = ""
-                        print(f"[Style Prompt Queue] 已加载预设 '{preset}'")
+                        print(f"[Style Prompt Queue] 已加载预设 '{预设模板}'")
                     else:
                         prefix = preset_content
                         suffix = ""
-                        print(f"[Style Prompt Queue] 无法解析预设 '{preset}'，已作为前缀处理")
+                        print(f"[Style Prompt Queue] 无法解析预设 '{预设模板}'，已作为前缀处理")
 
-        lines = _read_lines_from_source(multiline_text, file_path, use_file)
+        lines = _read_lines_from_source(多行文本, 文件路径, 使用文件)
         
         # 应用前缀和后缀
         final_lines = []
@@ -576,7 +576,7 @@ class StylePromptQueue:
             return ([[dummy, {"pooled_output": dummy_pooled}]],)
 
         # 始终为增量模式
-        idx = _pq_get_next_index(label, _pq_total=len(final_lines), source_descriptor=_pq_source_descriptor(use_file, file_path, multiline_text))
+        idx = _pq_get_next_index(队列标识, _pq_total=len(final_lines), source_descriptor=_pq_source_descriptor(使用文件, 文件路径, 多行文本))
         line_to_process = final_lines[idx]
         
         ordered = [(0, line_to_process)]

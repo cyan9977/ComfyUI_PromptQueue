@@ -1,169 +1,102 @@
+## ComfyUI_PromptQueue
+
+这是一个为 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 设计的自定义节点，旨在简化和自动化批量生成图像时的工作流。它允许你通过多行文本、外部文件以及可复用的模板来管理和序列化你的提示词。
+
+---
+
+## 节点介绍
+
+### 1. Style Prompt Queue / 风格化提示词队列 🆕
+
+这是一个功能强大的节点，专门用于**序列化生成**。它将“画师/风格”部分和“通用后缀”从核心提示词中分离出来，让你能够轻松地对一个主体列表应用不同的风格组合。
+
+- **核心功能**:
+  - **画师/风格提示词**: 在此输入艺术家、画风等前缀。
+  - **提示词序列**: 在此输入你的核心主体，每行一个，例如“一只猫”、“一条狗”。
+  - **提示词后缀**: 在此输入通用后缀，例如“杰作, 8k”。
+  - **预设系统**: 将常用的“画师/风格”和“后缀”组合保存为预设，方便一键切换。
+  - **文件支持**: 可以通过外部 `.txt` 文件加载提示词序列。
+- **运行模式**:
+  - **固定为增量模式**: 每次执行只处理序列中的一个提示词，非常适合长序列的自动化生成。
+
+![Style Prompt Queue 示例](https://raw.githubusercontent.com/cyan9977/ComfyUI_PromptQueue/main/screenshots/style-prompt-queue-cn.png)
+
+### 2. Prompt Queue / 提示词队列
+
+一个通用的正向提示词队列节点，支持文本、文件和模板三种输入方式。
+
+- **核心功能**:
+  - **多行文本**: 直接在节点中输入多个提示词。
+  - **文件支持**: 通过 `.txt` 文件加载提示词。
+  - **模板功能**: 使用 `{p}` 作为占位符，将模板应用于每一行提示词。
+- **运行模式**:
+  - `all`: 一次性处理所有提示词，生成一个批次。
+  - `incremental`: 每次执行处理一个提示词。
+
+### 3. Negative Prompt Queue / 负面提示词队列
+
+专门用于管理和应用负面提示词的节点。
+
+- **核心功能**:
+  - **多行文本**: 输入所有负面提示词。
+  - **模板预设**: 可以将常用的负面提示词组合保存为预设。
+
+### 4. Simple Prompt Queue / 简化提示词队列
+
+一个精简版的正向提示词队列，仅支持从文件加载，并可以选择预设，但不提供预设的保存和删除功能。
+
+---
+
 ## 安装
 
-将本仓库克隆到 ComfyUI 的 `custom_nodes` 目录，然后重启 ComfyUI。
+1.  打开命令行工具。
+2.  进入 ComfyUI 的 `custom_nodes` 目录:
+    ```bash
+    cd <你的ComfyUI根目录>/custom_nodes
+    ```
+3.  克隆本仓库:
+    ```bash
+    git clone https://github.com/cyan9977/ComfyUI_PromptQueue.git
+    ```
+4.  **重启 ComfyUI**。
 
-```
-cd <ComfyUI 根目录>/custom_nodes
-git clone https://github.com/cyan9977/ComfyUI_PromptQueue.git
-```
+---
 
+## 快速上手
 
-## Nodes
+### 使用 `Style Prompt Queue`
 
-### Simple Prompt Queue / 简化提示词队列
-- 简化版提示词队列节点，支持从文件读取并可选择已存在的模板预设（不提供保存/删除）
-- 将多行提示词视为队列，从 txt 文件按行读取，批量输出到 `CONDITIONING`
-- 参数
-  - `clip`: 连接到任意 CLIP 节点
-  - `文件路径`: 指向 `.txt` 文件，按行读取（UTF-8，忽略无法解码字符）
-  - `运行模式`: 运行模式
-    - `all`: 批量处理所有行
-    - `incremental`: 每次运行消费下一行（按队列顺序）
-  - `队列标识`: 队列标识符，用于区分不同队列的进度
-  - `预设模板`: 选择已保存的模板预设（正向预设集合，选择非"None"时自动使用）
-- 输出
-  - `positive`: 已按行批量堆叠好的 conditioning，可直接连接到采样器正向提示
+1.  **添加节点**: 在 ComfyUI 中添加 `Style Prompt Queue` 节点。
+2.  **连接 CLIP**: 将上游的 `CLIP` 输出连接到此节点的 `clip` 输入。
+3.  **填写提示词**:
+    - 在 **`artist_style_prompt`** 中填入风格，例如 `by Makoto Shinkai, cinematic lighting`。
+    - 在 **`multiline_text`** 中填入主体，每行一个，例如:
+      ```
+      a girl on the beach
+      a boy in the park
+      a robot on a tree
+      ```
+    - 在 **`prompt_suffix`** 中填入后缀，例如 `best quality, masterpiece, 8k`。
+4.  **连接输出**: 将此节点的 `positive` 输出连接到采样器（KSampler）的 `positive` 输入。
+5.  **运行**: 点击 `Queue Prompt`。每次执行，它会自动处理 `multiline_text` 中的下一行，并与前后缀组合成最终的提示词。
 
-### Negative Prompt Queue / 负面提示词队列
-- 负面提示词预设节点（非队列）。用于构建负面提示词 conditioning。
-- 支持多行文本输入和模板预设；始终一次性批处理所有行
-- 参数
-  - `clip`: 连接到任意 CLIP 节点
-  - `多行文本`: 多行输入，每行一个负面提示词
-  - `预设模板`: 选择已保存的模板预设（负向预设集合，选择非"None"时自动使用，忽略 模板）
-  - `模板`: 可选模板，使用 `{p}` 作为占位符，例如：`"bad quality, {p}, ugly"`
-  - `保存预设`: 勾选后保存当前 模板 内容为预设（拥有第二优先级，强制使用 模板 内容）
-  - `删除预设`: 勾选后删除当前选中的预设（拥有最高优先级）
-- 输出
-  - `negative`: 已按行批量堆叠好的 conditioning，可直接连接到采样器负面提示
+### 保存和使用预设 (`Style Prompt Queue`)
 
-### Prompt Queue / 提示词队列
-- 将多行提示词视为队列，或从 txt 文件按行读取，批量输出到 `CONDITIONING`。
-- 参数
-  - `clip`: 连接到任意 CLIP 节点
-  - `multiline_text`: 多行输入，每行一个提示词
-  - `use_file`: 勾选后从文件读取
-  - `file_path`: 指向 `.txt` 文件，按行读取（UTF-8，忽略无法解码字符）
-  - `mode`: 运行模式
-    - `all`: 批量处理所有行
-    - `incremental`: 每次运行消费下一行（按队列顺序）
-  - `label`: 队列标识符，用于区分不同队列的进度
-  - `preset`: 选择已保存的模板预设（正向预设集合，选择非"None"时自动使用，忽略 template）
-  - `template`: 可选模板，使用 `{p}` 作为占位符，例如：`"best quality, {p}, 4k"`
-  - `save_preset`: 勾选后保存当前 template 内容为预设（拥有第二优先级，强制使用 template 内容）
-  - `delete_preset`: 勾选后删除当前选中的预设（拥有最高优先级）
-- 输出
-  - `positive`: 已按行批量堆叠好的 conditioning，可直接连接到采样器正向提示
+1.  **填写内容**: 在 `artist_style_prompt` 和 `prompt_suffix` 中填入你想要保存的组合。
+2.  **命名预设**: 在 `preset_name_for_save` 中为你的预设命名，例如 `电影感-通用`。
+3.  **保存**: 勾选 `save_preset` 并运行一次工作流。预设即被保存。
+4.  **使用预设**: 从 `preset` 下拉菜单中选择你刚才保存的预设，节点会自动填入对应的前后缀。
 
-示例：
+---
 
-**正向提示词队列：**
-```
-multiline_text:
-  A cat on the beach
-  A dog in the park
-  A bird on a tree
+## 常见问题 (FAQ)
 
- template:
-   best quality, {p}, 4k
-```
+- **`队列标识 (label)` 的作用是什么？**
+  - 它为每个队列实例提供一个独立的ID。如果你在同一个工作流中使用了多个队列节点，请确保它们的 `label` 是不同的，这样它们的执行进度才不会互相干扰。
 
-**负面提示词队列：**
-```
-多行文本:
-  blurry, low quality
-  distorted, ugly
-  bad anatomy, deformed
+- **`incremental` 和 `all` 模式有什么区别？**
+  - `all`: 一次性处理所有提示词，将它们打包成一个批次输出。适合需要一次性生成所有结果的场景。
+  - `incremental`: 每次执行只处理队列中的下一个提示词。适合自动化、长序列的生成，例如动画帧。
 
- 模板:
-   bad quality, {p}, ugly
-```
-
-
-## Quick Start
-
-### 简化版节点使用（推荐新手）
-1) 放置 `CLIP Text Encode`（或任意提供 `CLIP` 的上游）
-2) 放置 `Simple Prompt Queue` 并连接 `clip`
-3) 在 `文件路径` 输入 `.txt` 文件路径
-4) 选择运行模式：
-   - `all`: 一次性处理所有行
-   - `incremental`: 每次运行处理下一行（需要多次运行）
-5) 可选：选择 `预设模板`
-6) 将 `Simple Prompt Queue` 的 `positive` 输出连接到采样器（正向提示）
-7) 运行，即可对每一行提示词批量出图
-
-### 负面提示词节点使用
-1) 放置 `CLIP Text Encode`（或任意提供 `CLIP` 的上游）
-2) 放置 `Negative Prompt Queue` 并连接 `clip`
-3) 在 `多行文本` 输入多行负面提示词
-4) 可选：设置 `模板`（例如 `bad quality, {p}, ugly`）或选择 `预设模板`
-5) 将 `Negative Prompt Queue` 的 `negative` 输出连接到采样器（负面提示）
-6) 运行，即可一次性处理输入的所有负面提示词
-
-### 完整版节点使用
-1) 放置 `CLIP Text Encode`（或任意提供 `CLIP` 的上游）
-2) 放置 `Prompt Queue` 并连接 `clip`
-3) 在 `multiline_text` 输入多行提示词，或勾选 `use_file` 并选择 `file_path`
-4) 选择运行模式：
-   - `all`: 一次性处理所有行
-   - `incremental`: 每次运行处理下一行（需要多次运行）
-5) 可选：设置 `template`（例如 `best quality, {p}, 4k`）或选择预设
-6) 将 `Prompt Queue` 的 `positive` 输出连接到采样器（正向提示）
-7) 运行，即可对每一行提示词批量出图
-
-
-## 使用说明与注意事项
-
-- 批量合并：内部对 `cond` 做了 padding，解决不同提示词长度导致的合并错误
-- 兼容性：若上游 `clip.encode_from_tokens(..., return_pooled=True)` 不返回 pooled，会自动降级并以空字符串占位，保证下游不出错
-- 文件编码：从 `file_path` 读取 `.txt` 时使用 UTF-8 并忽略无法解码字符；读取失败会回退到 `multiline_text`
-- 空输入：当没有有效行时会输出占位 `COND`
-- 模板占位：`template` 中使用 `{p}` 作为单行替换占位符
-- 队列模式：
-  - `all` 模式：一次性处理所有行，适合批量生成
-  - `incremental` 模式：每次运行消费下一行，适合逐张生成
-- 预设功能：
-  - 正向与负向预设分开存储：
-    - 正向预设用于 `PromptQueue` 与 `SimplePromptQueue`
-    - 负向预设用于 `NegativePromptQueue`
-  - 保存/删除预设：在支持保存的节点中操作（`PromptQueue`/`NegativePromptQueue`）
-  - 预设持久化：保存在 `_prompt_queue_state/state.json` 中（正负集合分别存储）
-
-
-## 示例（从文件读取）
-
-- 准备 `prompts.txt`：
-
-```
-A cat on the beach
-A dog in the park
-A bird on a tree
-```
-
-- 节点设置：
-  - `use_file`: 勾选
-  - `file_path`: 指向 `prompts.txt`
-  - `template`: `best quality, {p}, 4k`（可选）
-
-- 连接采样器并运行，即可一次性按行批量生成。
-
-
-## FAQ
-
-- 为什么只改了模板就全部生效？
-  - 模板会对每一行 `{p}` 替换后再统一编码，因此能批量生效。
-
-- `incremental` 模式和 `all` 模式的区别？
-  - `all` 模式：一次运行处理所有行，输出包含所有提示词的批量 conditioning
-  - `incremental` 模式：每次运行只处理一行，按队列顺序逐行消费，适合逐张生成
-
-- 如何保存、使用和删除预设？
-  - 保存：在 `template` 输入完整提示词，勾选 `save_preset` 后运行（预设名称为提示词内容）
-  - 使用：从 `preset` 下拉菜单选择预设（非"None"），自动使用预设内容
-  - 删除：选择要删除的预设，勾选 `delete_preset` 后运行
-  - 切换：选择 `preset="None"`，直接使用 `template` 字段内容
-  - 优先级：`delete_preset` > `save_preset` > `preset`，高优先级操作会忽略低优先级
-
-- `label` 的作用是什么？
-  - 用于区分不同的队列，每个 `label` 维护独立的计数器，避免不同工作流的队列互相影响
+- **预设保存在哪里？**
+  - 所有的预设数据都保存在 `ComfyUI/custom_nodes/ComfyUI_PromptQueue/_prompt_queue_state/state.json` 文件中。
