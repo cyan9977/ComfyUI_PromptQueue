@@ -19,8 +19,6 @@
 - **运行模式**:
   - **固定为增量模式**: 每次执行只处理序列中的一个提示词，非常适合长序列的自动化生成。
 
-![Style Prompt Queue 示例](https://raw.githubusercontent.com/cyan9977/ComfyUI_PromptQueue/main/screenshots/style-prompt-queue-cn.png)
-
 ### 2. Prompt Queue / 提示词队列
 
 一个通用的正向提示词队列节点，支持文本、文件和模板三种输入方式。
@@ -99,4 +97,5 @@
   - `incremental`: 每次执行只处理队列中的下一个提示词。适合自动化、长序列的生成，例如动画帧。
 
 - **预设保存在哪里？**
+
   - 所有的预设数据都保存在 `ComfyUI/custom_nodes/ComfyUI_PromptQueue/_prompt_queue_state/state.json` 文件中。
