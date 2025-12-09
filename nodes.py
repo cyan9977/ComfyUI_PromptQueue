@@ -797,7 +797,7 @@ def _pq_delete_negative_template_preset(name: str) -> None:
 # 注册新节点
 NODE_CLASS_MAPPINGS.update({
     "NegativePromptQueue": NegativePromptQueue,
-    "StylePromptQueue": "PromptQueue 增量",
+    "StylePromptQueue": StylePromptQueue,
     "SimpleStylePromptQueue": SimpleStylePromptQueue,
     "StylePromptQueueBatch": StylePromptQueueBatch,
     "SimpleStylePromptQueueBatch": SimpleStylePromptQueueBatch,
