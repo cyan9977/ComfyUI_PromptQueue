@@ -1,0 +1,20 @@
+{
+  "Template Presets Negative": {
+    "PonyNeg,": "{p},score_6,score_5,score_4,simplified,abstract,unrealistic,impressionistic,low resolution,lowres,bad anatomy,bad hands,missing fingers,worst quality,low quality,normal quality,cartoon,anime,drawing,sketch,illustration,artificial,poor quality,nsfw,worst quality,old,early,low quality,lowres,signature,username,logo,bad hands,mutated hands,mammal,anthro,furry,ambiguous form,feral,semi-anthro,",
+    "NovaNeg,": "{p},modern, recent, old, oldest, cartoon, graphic, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body, lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cropped, very displeasing, (worst quality, bad quality:1.2), sketch, jpeg artifacts, signature, watermark, username, simple background, conjoined, bad ai-generated",
+    "NOVAFurryNeg,": "{p},human, multiple tails, modern, recent, old, oldest, graphic, cartoon, text, painting, crayon, graphite, abstract, glitch, deformed, mutated, ugly, disfigured, long body, lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer digits, cropped, very displeasing, (worst quality, bad quality:1.2), bad anatomy, sketch, jpeg artifacts, signature, watermark, username, simple background, conjoined, bad ai-generated",
+    "NoobAINeg,": "{p},worst quality, old, early, low quality, lowres, signature, username, logo, bad hands, mutated hands, mammal, anthro, furry, ambiguous form, feral, semi-anthro,"
+  },
+  "Template Presets Positive": {
+    "Pony": "score_9, score_8_up, score_7_up, (SUBJECT),{p}",
+    "Pony_realistic": "score_9, score_8_up, score_7_up, source_real, real_skin,{p}",
+    "Nova": "masterpiece, best quality, amazing quality, 4k, very aesthetic, high resolution, ultra-detailed, absurdres, newest, scenery, {P}, BREAK, depth of field, volumetric lighting",
+    "NovaFurry": "masterpiece, best quality, amazing quality, very aesthetic, high resolution, ultra-detailed, absurdres, newest, scenery, furry, anthro, {P}, BREAK, depth of field, detailed fluffy fur, volumetric lighting,",
+    "NoobAI": "{p},masterpiece, best quality, newest, absurdres, highres, amazing quality,",
+    "Nai4-hot": "(misaka 12003-gou:1.2),(dino\\(dinoartforame):0.8),(wanke:0.8),(liduke:0.8),realistic,4k,photorealistic,bokeh,chromatic_aberration,depth of field,{p},masterpiece,best quality,newest,absurdres,highres,amazing quality,Cinematic,",
+    "Youthful,sensual,semi-realistic": "{artist:omone_hokoma_agm,[artist:wlop],[artist:nababa]},[[kidmo]],,{p},masterpiece,best quality,newest,absurdres,highres,amazing quality,Cinematic,",
+    "Mature,sensual,semi-realistic": "[[[kedama_milk]]],[sanuki_(kyoudashya)],murata_yuusuke,[[kidmo]],,{p},masterpiece,best quality,newest,absurdres,highres,amazing quality,Cinematic,",
+    "nsfw-masterpiece": "nsfw,{p},masterpiece,best quality,newest,absurdres,highres,amazing quality,",
+    "Realistic": "{p},photorealistic, ultra-detailed, best quality, high detail, HDR, film grain, masterpiece,"
+  }
+}
