@@ -328,7 +328,7 @@ class StylePromptQueue:
     [增量模式] 风格化提示词队列节点。
     - 每次运行仅输出一行提示词。
     - 即使 Batch Size > 1，也全部使用这一行（用于提高容错率）。
-    - 索引设置：支持 "-1"(记忆), "0"(重置), "5"(指定行), "2,8,35"(列表)
+    - 索引设置：支持 "-1"(记忆/自动), "0"(从0开始), "5"(从5开始), "2,8,35"(列表循环)
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -430,37 +430,63 @@ class StylePromptQueue:
         idx_mode = indices[0]
         
         target_idx = 0
+        desc = _pq_source_descriptor(使用文件, 文件路径, 多行文本)
         
+        # 扩展逻辑：支持 "Start From X" 且自动递增
+        # 检测 索引设置变更 或 源内容变更
+        current_setting_str = str(索引设置).strip()
+        last_setting = _pq_store.get("Index Settings", desc, "")
+        
+        setting_changed = (current_setting_str != last_setting)
+        if setting_changed:
+             _pq_store.put("Index Settings", desc, current_setting_str)
+             
+        # 获取 Auto_Queue 的最后一次源，用于判断是否发生源变更
+        last_source = _pq_store.get("PromptQueue Sources", "Auto_Queue", None)
+        source_changed = (last_source != desc)
+        
+        should_reset_counter = setting_changed or source_changed
+
         if idx_mode == -1:
             # 记忆模式 (Auto/Resume)
-            # 使用原有的 _pq_get_next_index 逻辑，自动递增
-            # 队列标识这里隐式使用 "Index Setting - Auto" 或者是文件名哈希，
-            # 为了简单起见，我们还是需要一个 Key。
-            # 这里我们用 "Auto_Queue" + 文件描述符 作为 key
-            desc = _pq_source_descriptor(使用文件, 文件路径, 多行文本)
             target_idx = _pq_get_next_index("Auto_Queue", len(final_lines), desc)
             
-        elif idx_mode == 0:
-            # 重置/顺序模式 (Reset to 0)
-            target_idx = 0
+        elif len(indices) == 1 and idx_mode >= 0:
+            # 0: Auto from beginning (Start from 0 + Auto Increment)
+            # N > 0: Fixed single line N (1-based index) -> Index N-1
+            
+            if idx_mode == 0:
+                 # Auto Mode (0)
+                 if should_reset_counter:
+                     _pq_store.put("PromptQueue Counters", "Auto_Queue", 0)
+                     _pq_store.put("PromptQueue Sources", "Auto_Queue", desc)
+                 
+                 target_idx = _pq_get_next_index("Auto_Queue", len(final_lines), desc)
+            else:
+                 # Fixed Line Mode (e.g. 1 -> 1st line -> index 0)
+                 # Non-incremental
+                 target_idx = idx_mode - 1
             
         else:
-            # 指定模式 / 列表模式
-            if len(indices) == 1:
-                target_idx = indices[0]
-            else:
-                # 列表循环
-                # 使用一个基于列表内容的特殊 key
-                list_key = f"List_{索引设置}"
-                # 这里的 total 是列表长度
-                list_idx = _pq_get_next_index(list_key, len(indices), list_key)
-                target_idx = indices[list_idx]
+            # 列表模式 (2,8,35) -> 视为 1-based index
+            # 使用一个基于列表内容的特殊 key
+            list_key = f"List_{索引设置}"
+            # 这里的 total 是列表长度
+            list_idx = _pq_get_next_index(list_key, len(indices), list_key)
+            val = indices[list_idx]
+            # 转换为 0-based
+            target_idx = val - 1
+            if target_idx < 0:
+                target_idx = 0
 
         # 越界保护
         if target_idx >= len(final_lines):
             target_idx = target_idx % len(final_lines)
         if target_idx < 0:
              target_idx = 0
+
+        # Debug print
+        print(f"[PromptQueue] Index Setting: '{索引设置}' -> Mode: {idx_mode} -> Target Line: {target_idx + 1}")
 
         line_to_process = final_lines[target_idx]
         
