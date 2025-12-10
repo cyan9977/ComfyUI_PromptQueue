@@ -357,7 +357,7 @@ class StylePromptQueue:
     FUNCTION = "run"
     CATEGORY = "PromptQueue"
 
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设):
+    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设, unique_id=None):
         prefix = 画师风格提示词
         suffix = 提示词后缀
 
@@ -434,22 +434,29 @@ class StylePromptQueue:
         
         # 扩展逻辑：支持 "Start From X" 且自动递增
         # 检测 索引设置变更 或 源内容变更
+        
+        queue_label = "Auto_Queue"
+        if unique_id:
+            queue_label = f"{unique_id}_Auto_Queue"
+            
         current_setting_str = str(索引设置).strip()
-        last_setting = _pq_store.get("Index Settings", desc, "")
+        # 索引设置状态也需要隔离，否则不同节点使用相同文本但不同设置时会互相干扰
+        setting_key = f"{queue_label}_Settings_{desc}"
+        last_setting = _pq_store.get("Index Settings", setting_key, "")
         
         setting_changed = (current_setting_str != last_setting)
         if setting_changed:
-             _pq_store.put("Index Settings", desc, current_setting_str)
-             
+             _pq_store.put("Index Settings", setting_key, current_setting_str)
+
         # 获取 Auto_Queue 的最后一次源，用于判断是否发生源变更
-        last_source = _pq_store.get("PromptQueue Sources", "Auto_Queue", None)
+        last_source = _pq_store.get("PromptQueue Sources", queue_label, None)
         source_changed = (last_source != desc)
         
         should_reset_counter = setting_changed or source_changed
 
         if idx_mode == -1:
             # 记忆模式 (Auto/Resume)
-            target_idx = _pq_get_next_index("Auto_Queue", len(final_lines), desc)
+            target_idx = _pq_get_next_index(queue_label, len(final_lines), desc)
             
         elif len(indices) == 1 and idx_mode >= 0:
             # 0: Auto from beginning (Start from 0 + Auto Increment)
@@ -458,10 +465,10 @@ class StylePromptQueue:
             if idx_mode == 0:
                  # Auto Mode (0)
                  if should_reset_counter:
-                     _pq_store.put("PromptQueue Counters", "Auto_Queue", 0)
-                     _pq_store.put("PromptQueue Sources", "Auto_Queue", desc)
+                     _pq_store.put("PromptQueue Counters", queue_label, 0)
+                     _pq_store.put("PromptQueue Sources", queue_label, desc)
                  
-                 target_idx = _pq_get_next_index("Auto_Queue", len(final_lines), desc)
+                 target_idx = _pq_get_next_index(queue_label, len(final_lines), desc)
             else:
                  # Fixed Line Mode (e.g. 1 -> 1st line -> index 0)
                  # Non-incremental
@@ -523,9 +530,9 @@ class SimpleStylePromptQueue(StylePromptQueue):
             }
         }
         
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板):
+    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, unique_id=None):
         # 调用父类的 run，传入 None/False 作为预设参数
-        return super().run(clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, "", False, False)
+        return super().run(clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, "", False, False, unique_id=unique_id)
         
     @classmethod
     def IS_CHANGED(cls, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板):
