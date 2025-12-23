@@ -20,18 +20,60 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 PARAMETER_LABELS = {
     "multiline_text": "多行文本",
     "use_file": "使用文件", 
-    "file_path": "文件路径",
+    "file_folder": "提示词文件夹",
+    "file_name": "文件名",
     "mode": "运行模式",
     "label": "队列标识",
     "preset": "预设模板",
     "template": "模板",
     "save_preset": "保存预设",
     "delete_preset": "删除预设",
+    "global_prefix": "全局前缀",
+    "save_global_prefix": "保存为全局前缀",
     "artist_style_prompt": "画师风格提示词",
     "prompt_suffix": "提示词后缀",
     "preset_name_for_save": "保存预设名称",
     "index_setting": "索引设置"
 }
+
+
+def _pq_normalize_prompt_part(s: str) -> str:
+    """清理提示词片段首尾空白与多余逗号，避免拼接后出现 ', ,' 或 ',,'。"""
+    if s is None:
+        return ""
+    s = str(s).strip()
+    # 仅处理首尾逗号（不改中间内容）
+    s = s.strip(",").strip()
+    return s
+
+
+_PQ_GLOBAL_PREFIX_CATEGORY = "Global"
+_PQ_GLOBAL_PREFIX_KEY = "Global Prefix"
+
+
+def _pq_get_global_prefix() -> str:
+    return str(_pq_store.get(_PQ_GLOBAL_PREFIX_CATEGORY, _PQ_GLOBAL_PREFIX_KEY, "") or "")
+
+
+def _pq_set_global_prefix(value: str) -> None:
+    _pq_store.put(_PQ_GLOBAL_PREFIX_CATEGORY, _PQ_GLOBAL_PREFIX_KEY, str(value or ""))
+
+
+def _pq_build_prompt_file_path(file_folder: str, file_name: str) -> str:
+    """
+    将“提示词文件夹 + 文件名”组合成最终 .txt 路径。
+    - file_name 若已包含 .txt（忽略大小写），则不重复追加。
+    - file_folder 可为空；为空时返回 file_name（便于直接写完整路径）。
+    """
+    folder = str(file_folder or "").strip()
+    name = str(file_name or "").strip()
+    if not name:
+        return ""
+    if not name.lower().endswith(".txt"):
+        name = name + ".txt"
+    if folder:
+        return os.path.join(folder, name)
+    return name
 
 def parse_frame_prompts(raw_text: str):
     """
@@ -339,11 +381,14 @@ class StylePromptQueue:
         return {
             "required": {
                 "clip": ("CLIP",),
+                "全局前缀": ("STRING", {"multiline": False, "default": ""}),
+                "保存为全局前缀": ("BOOLEAN", {"default": False}),
                 "画师风格提示词": ("STRING", {"multiline": False, "default": ""}),
                 "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
                 "提示词后缀": ("STRING", {"multiline": False, "default": ""}),
                 "使用文件": ("BOOLEAN", {"default": False}),
-                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "提示词文件夹": ("STRING", {"multiline": False, "default": ""}),
+                "文件名": ("STRING", {"multiline": False, "default": ""}),
                 "索引设置": ("STRING", {"multiline": False, "default": "-1"}),
                 "预设模板": (preset_list, {"default": "None"}),
                 "保存预设名称": ("STRING", {"multiline": False, "default": ""}),
@@ -357,7 +402,12 @@ class StylePromptQueue:
     FUNCTION = "run"
     CATEGORY = "PromptQueue"
 
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设, unique_id=None):
+    def run(self, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设, unique_id=None):
+        # 处理全局前缀（独立于预设逻辑，永远保留最高层级）
+        if 保存为全局前缀:
+            _pq_set_global_prefix(全局前缀)
+        global_prefix = _pq_normalize_prompt_part(全局前缀) or _pq_normalize_prompt_part(_pq_get_global_prefix())
+
         prefix = 画师风格提示词
         suffix = 提示词后缀
 
@@ -412,12 +462,18 @@ class StylePromptQueue:
                         suffix = ""
                         print(f"[Style Prompt Queue] 无法解析预设 '{预设模板}'，已作为前缀处理")
         
-        lines = _read_lines_from_source(多行文本, 文件路径, 使用文件)
+        # 组合文件路径（优先“文件夹+文件名”，回退到“文件路径”以兼容旧工作流）
+        effective_file_path = _pq_build_prompt_file_path(提示词文件夹, 文件名)
+        lines = _read_lines_from_source(多行文本, effective_file_path, 使用文件)
         
         # 应用前缀和后缀
         final_lines = []
         for line in lines:
-            parts = [p for p in [prefix, line, suffix] if p and p.strip()]
+            parts = []
+            for p in [global_prefix, prefix, line, suffix]:
+                pp = _pq_normalize_prompt_part(p)
+                if pp:
+                    parts.append(pp)
             final_lines.append(", ".join(parts))
 
         if not final_lines:
@@ -430,7 +486,7 @@ class StylePromptQueue:
         idx_mode = indices[0]
         
         target_idx = 0
-        desc = _pq_source_descriptor(使用文件, 文件路径, 多行文本)
+        desc = _pq_source_descriptor(使用文件, effective_file_path, 多行文本)
         
         # 扩展逻辑：支持 "Start From X" 且自动递增
         # 检测 索引设置变更 或 源内容变更
@@ -503,7 +559,7 @@ class StylePromptQueue:
         return ([[cond, meta]], line_to_process)
 
     @classmethod
-    def IS_CHANGED(cls, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设):
+    def IS_CHANGED(cls, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设):
         # 始终返回时间戳以强制重新执行
         return str(time.time())
 
@@ -520,22 +576,41 @@ class SimpleStylePromptQueue(StylePromptQueue):
         return {
             "required": {
                 "clip": ("CLIP",),
+                "全局前缀": ("STRING", {"multiline": False, "default": ""}),
+                "保存为全局前缀": ("BOOLEAN", {"default": False}),
                 "画师风格提示词": ("STRING", {"multiline": False, "default": ""}),
                 "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
                 "提示词后缀": ("STRING", {"multiline": False, "default": ""}),
                 "使用文件": ("BOOLEAN", {"default": False}),
-                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "提示词文件夹": ("STRING", {"multiline": False, "default": ""}),
+                "文件名": ("STRING", {"multiline": False, "default": ""}),
                 "索引设置": ("STRING", {"multiline": False, "default": "-1"}),
                 "预设模板": (preset_list, {"default": "None"}),
             }
         }
         
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, unique_id=None):
+    def run(self, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板, unique_id=None):
         # 调用父类的 run，传入 None/False 作为预设参数
-        return super().run(clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, "", False, False, unique_id=unique_id)
+        return super().run(
+            clip,
+            全局前缀,
+            保存为全局前缀,
+            画师风格提示词,
+            多行文本,
+            提示词后缀,
+            使用文件,
+            提示词文件夹,
+            文件名,
+            索引设置,
+            预设模板,
+            "",
+            False,
+            False,
+            unique_id=unique_id
+        )
         
     @classmethod
-    def IS_CHANGED(cls, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板):
+    def IS_CHANGED(cls, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板):
         return str(time.time())
 
 
@@ -553,11 +628,14 @@ class StylePromptQueueBatch:
         return {
             "required": {
                 "clip": ("CLIP",),
+                "全局前缀": ("STRING", {"multiline": False, "default": ""}),
+                "保存为全局前缀": ("BOOLEAN", {"default": False}),
                 "画师风格提示词": ("STRING", {"multiline": False, "default": ""}),
                 "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
                 "提示词后缀": ("STRING", {"multiline": False, "default": ""}),
                 "使用文件": ("BOOLEAN", {"default": False}),
-                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "提示词文件夹": ("STRING", {"multiline": False, "default": ""}),
+                "文件名": ("STRING", {"multiline": False, "default": ""}),
                 "索引设置": ("STRING", {"multiline": False, "default": "0"}),
                 "预设模板": (preset_list, {"default": "None"}),
                 "保存预设名称": ("STRING", {"multiline": False, "default": ""}),
@@ -571,7 +649,11 @@ class StylePromptQueueBatch:
     FUNCTION = "run"
     CATEGORY = "PromptQueue"
 
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设):
+    def run(self, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板, 保存预设名称, 保存预设, 删除预设):
+        if 保存为全局前缀:
+            _pq_set_global_prefix(全局前缀)
+        global_prefix = _pq_normalize_prompt_part(全局前缀) or _pq_normalize_prompt_part(_pq_get_global_prefix())
+
         prefix = 画师风格提示词
         suffix = 提示词后缀
         
@@ -612,11 +694,16 @@ class StylePromptQueueBatch:
                     prefix = preset_content
                     suffix = ""
                     
-        lines = _read_lines_from_source(多行文本, 文件路径, 使用文件)
+        effective_file_path = _pq_build_prompt_file_path(提示词文件夹, 文件名)
+        lines = _read_lines_from_source(多行文本, effective_file_path, 使用文件)
         
         final_lines = []
         for line in lines:
-            parts = [p for p in [prefix, line, suffix] if p and p.strip()]
+            parts = []
+            for p in [global_prefix, prefix, line, suffix]:
+                pp = _pq_normalize_prompt_part(p)
+                if pp:
+                    parts.append(pp)
             final_lines.append(", ".join(parts))
 
         if not final_lines:
@@ -684,22 +771,25 @@ class SimpleStylePromptQueueBatch(StylePromptQueueBatch):
         return {
             "required": {
                 "clip": ("CLIP",),
+                "全局前缀": ("STRING", {"multiline": False, "default": ""}),
+                "保存为全局前缀": ("BOOLEAN", {"default": False}),
                 "画师风格提示词": ("STRING", {"multiline": False, "default": ""}),
                 "多行文本": ("STRING", {"multiline": True, "default": "A cat\nA dog"}),
                 "提示词后缀": ("STRING", {"multiline": False, "default": ""}),
                 "使用文件": ("BOOLEAN", {"default": False}),
-                "文件路径": ("STRING", {"multiline": False, "default": ""}),
+                "提示词文件夹": ("STRING", {"multiline": False, "default": ""}),
+                "文件名": ("STRING", {"multiline": False, "default": ""}),
                 "索引设置": ("STRING", {"multiline": False, "default": "0"}),
                 "预设模板": (preset_list, {"default": "None"}),
             }
         }
         
-    def run(self, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板):
+    def run(self, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板):
         # 调用父类的 run，传入 None 作为预设参数
-        return super().run(clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板, "", False, False)
+        return super().run(clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板, "", False, False)
         
     @classmethod
-    def IS_CHANGED(cls, clip, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 文件路径, 索引设置, 预设模板):
+    def IS_CHANGED(cls, clip, 全局前缀, 保存为全局前缀, 画师风格提示词, 多行文本, 提示词后缀, 使用文件, 提示词文件夹, 文件名, 索引设置, 预设模板):
         return float("nan")
 
 
